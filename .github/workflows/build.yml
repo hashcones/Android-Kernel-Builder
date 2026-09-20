@@ -11,6 +11,12 @@ jobs:
       contents: read
       actions: write
 
+    env:
+      # Hardcoded GKI Manifest parameters matching your 6.1 device tree
+      REPO_URL: "https://googlesource.com"
+      REPO_BRANCH: "common-android14-6.1"
+      BAZEL_TARGET: "//common:kernel_aarch64_dist"
+
     steps:
       - name: Checkout Workflow
         uses: actions/checkout@v4
@@ -19,8 +25,8 @@ jobs:
         run: |
           sudo apt-get update
           
-          # Install 'repo' natively from Ubuntu repositories alongside building tools
-          sudo apt-get install -y jq git curl python3 python-is-python3 repo rsync
+          # Install 'repo' natively alongside essential build utilities
+          sudo apt-get install -y git curl python3 python-is-python3 repo rsync
           
           # Configure Git Identity (Mandatory requirement for repo init)
           git config --global user.name "GitHub Action"
@@ -28,72 +34,55 @@ jobs:
 
       - name: Initialize & Sync Kernel Source (GKI)
         run: |
-          # 1. Parse manifest variables from repos.json using jq
-          REPO_URL=$(jq -r '..repo // "https://googlesource.com"' repos.json)
-          REPO_BRANCH=$(jq -r '..branch // "common-android14-6.1"' repos.json)
+          echo "Initializing repo from: ${{ env.REPO_URL }} on branch: ${{ env.REPO_BRANCH }}"
           
-          echo "Initializing repo from: $REPO_URL on branch: $REPO_BRANCH"
-          
-          # 2. Create workspace directory structure
+          # Create workspace directory structure
           mkdir -p android-kernel
           cd android-kernel
           
-          # Initialize the Google GKI Manifest matching your chip arch
-          repo init -u "$REPO_URL" -b "$REPO_BRANCH" --depth=1
+          # Initialize the Google GKI Manifest with a shallow clone depth
+          repo init -u "${{ env.REPO_URL }}" -b "${{ env.REPO_BRANCH }}" --depth=1
           
-          # Execute the source tree sync (Shallow clone to save space)
+          # Execute the source tree sync 
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle
 
       - name: Apply NetHunter Patch & Configs
         run: |
-          # Verify directory exists before attempting tracking navigation
+          # Verify directory exists before moving forward
           if [ ! -d "android-kernel/common" ]; then
             echo "Error: The Google GKI repo sync did not complete successfully or common directory is missing."
-            echo "Listing environment tree to debug:"
-            ls -la
             exit 1
           fi
 
           cd android-kernel/common
           
-          # Evaluate if NetHunter source patching is requested in repos.json
-          DO_PATCH=$(jq -r '..nethunter_patch // false' $GITHUB_WORKSPACE/repos.json)
-          
-          if [ "$DO_PATCH" = "true" ]; then
-              echo "Downloading and applying NetHunter patches..."
-              git clone https://gitlab.com
-              cd kali-nethunter-kernel
-              ./patch.sh ..
-              cd ..
-          fi
+          echo "Downloading and applying Kali NetHunter patches..."
+          git clone https://gitlab.com
+          cd kali-nethunter-kernel
+          ./patch.sh ..
+          cd ..
 
-          # Read and safely append configurations array from json to gki_defconfig mapping table
-          jq -r '..extra_configs[]' $GITHUB_WORKSPACE/repos.json > extra_configs.txt
+          echo "Injecting NetHunter configurations into gki_defconfig..."
+          cat <<EOF >> arch/arm64/configs/gki_defconfig
+          CONFIG_SYSVIPC=y
+          CONFIG_BINFMT_MISC=y
+          CONFIG_CFG80211=m
+          CONFIG_MAC80211=m
+          CONFIG_CFG80211_WEXT=y
+          CONFIG_USB_G_ANDROID=y
+          CONFIG_USB_F_HID=y
+          CONFIG_USB_CONFIGFS_F_HID=y
+          EOF
           
-          echo "Appending the following configurations to arch/arm64/configs/gki_defconfig:"
-          cat extra_configs.txt
-          
-          cat extra_configs.txt >> arch/arm64/configs/gki_defconfig
-          
-          # Clean up temporary configuration file
-          rm extra_configs.txt
+          echo "Successfully appended configurations to arch/arm64/configs/gki_defconfig"
 
       - name: Build with Bazel (Kleaf)
         working-directory: android-kernel
         run: |
-          # Extract custom bazel target parameters or default to standard aarch64 dist
-          BAZEL_TARGET=$(jq -r '..bazel_target // "//common:kernel_aarch64_dist"' $GITHUB_WORKSPACE/repos.json)
-          GKI_OVERRIDE=$(jq -r '..gki_certification_override // true' $GITHUB_WORKSPACE/repos.json)
+          echo "Starting Hermetic Bazel build for target: ${{ env.BAZEL_TARGET }}"
           
-          FLAGS=""
-          if [ "$GKI_OVERRIDE" = "true" ]; then
-             FLAGS="--//common:gki_certification=false"
-          fi
-
-          echo "Starting Hermetic Bazel build for target: $BAZEL_TARGET with flags: $FLAGS"
-          
-          # Execute compiler engine build strings
-          tools/bazel build $FLAGS $BAZEL_TARGET
+          # Run compilation bypassing Google certification to allow custom drivers
+          tools/bazel build --//common:gki_certification=false ${{ env.BAZEL_TARGET }}
 
       - name: Prepare AnyKernel3 Packaging
         run: |
