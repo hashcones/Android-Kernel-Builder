@@ -24,10 +24,14 @@ jobs:
         run: |
           sudo apt-get update
           
-          # CRITICAL: We DO NOT install 'repo' via apt-get here anymore to avoid the bug
+          # CRITICAL FOR FIXING THE LOOP: We completely remove any hidden, broken pre-packaged repo configs
+          sudo apt-get remove -y repo || true
+          sudo apt-get purge -y repo || true
+          
+          # Install clean foundational software utilities
           sudo apt-get install -y git curl python3 python-is-python3 rsync
           
-          # Configure Git Identity (Mandatory requirement for repo init)
+          # Configure Git Identity (Strict requirement for repo processing loops)
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
@@ -35,23 +39,25 @@ jobs:
         run: |
           echo "Initializing repo from: ${{ env.REPO_URL }} on branch: ${{ env.REPO_BRANCH }}"
           
-          # Create a custom binary path and download Google's direct standalone Python launcher
-          mkdir -p $HOME/bin
-          curl https://googlesource.com | base64 --decode > $HOME/bin/repo
-          chmod a+x $HOME/bin/repo
+          # Create an explicit local directory structure
+          mkdir -p $GITHUB_WORKSPACE/bin
           
-          # Add our clean standalone bin folder directly to the path
-          export PATH="$HOME/bin:$PATH"
+          # Pull the authentic, un-compiled Python engine wrapper cleanly from Google Gerrit
+          curl -s https://googlesource.com | base64 --decode > $GITHUB_WORKSPACE/bin/repo
+          chmod a+x $GITHUB_WORKSPACE/bin/repo
           
-          # Create workspace directory structure
+          # Prepend our clean local bin path right to the front of the tracking order
+          export PATH="$GITHUB_WORKSPACE/bin:$PATH"
+          
+          # Form the kernel building workspace
           mkdir -p android-kernel
           cd android-kernel
           
-          # Run the pure standalone script. This strictly respects the gerrit path mirror and bypasses the 404 error
-          repo init -u "${{ env.REPO_URL }}" -b "${{ env.REPO_BRANCH }}" --depth=1 --repo-url=https://googlesource.com
+          # Force python to strictly execute our targeted binary directly, completely bypassing system overrides
+          python3 $GITHUB_WORKSPACE/bin/repo init -u "${{ env.REPO_URL }}" -b "${{ env.REPO_BRANCH }}" --depth=1 --repo-url=https://gerrit.googlesource.com/git-repo
           
-          # Execute the source tree sync 
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+          # Execute source synchronization download 
+          python3 $GITHUB_WORKSPACE/bin/repo sync -c -j$(nproc) --no-tags --no-clone-bundle
 
       - name: Apply NetHunter Patch & Configs
         run: |
