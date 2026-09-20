@@ -1,31 +1,24 @@
-[  {
-    "kernelSource": {
-      "name": "miku-KernelSU",
-      "repo": "https://github.com/PhamtomK12/kernel_xiaomi_odin",
-      "branch": "TDA",
-      "device": "odin"
-    },
-    "withKernelSU": true,
-    "toolchains": [
-      {
-        "repo": "https://android.googlesource.com/platform/prebuilts/gas/linux-x86",
-        "branch": "master",
-        "name": "gas"
-      },
-      {
-        "repo": "https://gitlab.com/ThankYouMario/android_prebuilts_clang-standalone/",
-        "branch": "11",
-        "name": "clang"
-      }
-    ],
-    "params": {
-      "ARCH": "arm64",
-      "CROSS_COMPILE": "aarch64-linux-gnu-",
-      "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
-      "CROSS_COMPILE_COMPAT": "arm-linux-gnueabi-",
-      "CLANG_TRIPLE": "aarch64-linux-gnu-",
-      "AR": "",
-      "CC": "clang"
-    }
+[
+  {
+    "repo": "https://android.googlesource.com/kernel/manifest",
+    "branch": "common-android14-6.1",
+    "version": "6.1",
+    "arch": "arm64",
+    "compiler": "clang",
+    "clang_version": "r487747c",
+    "target": "gki_defconfig",
+    "bazel_target": "//common:kernel_aarch64_dist",
+    "gki_certification_override": true,
+    "nethunter_patch": true,
+    "extra_configs": [
+      "CONFIG_SYSVIPC=y",
+      "CONFIG_BINFMT_MISC=y",
+      "CONFIG_CFG80211=m",
+      "CONFIG_MAC80211=m",
+      "CONFIG_CFG80211_WEXT=y",
+      "CONFIG_USB_G_ANDROID=y",
+      "CONFIG_USB_F_HID=y",
+      "CONFIG_USB_CONFIGFS_F_HID=y"
+    ]
   }
 ]
