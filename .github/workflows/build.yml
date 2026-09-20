@@ -12,7 +12,8 @@ jobs:
       actions: write
 
     env:
-      REPO_URL: "https://googlesource.com"
+      # Named uniquely to completely prevent 'repo' from intercepting internal variables
+      TARGET_GKI_MANIFEST: "https://googlesource.com"
       REPO_BRANCH: "common-android14-6.1"
       BAZEL_TARGET: "//common:kernel_aarch64_dist"
 
@@ -20,44 +21,69 @@ jobs:
       - name: Checkout Workflow
         uses: actions/checkout@v4
 
-      - name: Clean Environment & Install Dependencies
+      - name: Clean Environment & Build Python 2 Fallback Bridge
         run: |
           sudo apt-get update
           
-          # CRITICAL FOR FIXING THE LOOP: We completely remove any hidden, broken pre-packaged repo configs
+          # Force purge any broken apt-managed binary instances
           sudo apt-get remove -y repo || true
           sudo apt-get purge -y repo || true
           
-          # Install clean foundational software utilities
-          sudo apt-get install -y git curl python3 python-is-python3 rsync
+          # Install core prerequisites needed for GKI builds and Python compilation
+          sudo apt-get install -y git curl python3 rsync build-essential libssl-dev libffi-dev
           
-          # Configure Git Identity (Strict requirement for repo processing loops)
+          # --- MANDATORY PYTHON 2 FALLBACK BRIDGING ---
+          echo "Compiling and deploying Python 2 structure to intercept environment variables..."
+          mkdir -p $GITHUB_WORKSPACE/py2-core
+          cd $GITHUB_WORKSPACE/py2-core
+          
+          # Pull down stable final release tree directly from official source archives
+          wget --quiet https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
+          tar -xzf Python-2.7.18.tgz
+          cd Python-2.7.18
+          
+          # Configure and execute multi-threaded compilation target
+          ./configure --prefix=$GITHUB_WORKSPACE/py2-bin --enable-optimizations > /dev/null
+          make -j$(nproc) > /dev/null
+          make install > /dev/null
+          
+          # Construct symbolic link bridges to intercept both generic mapping signatures
+          ln -sf $GITHUB_WORKSPACE/py2-bin/bin/python2.7 $GITHUB_WORKSPACE/py2-bin/bin/python
+          ln -sf $GITHUB_WORKSPACE/py2-bin/bin/python2.7 $GITHUB_WORKSPACE/py2-bin/bin/python2
+          
+          # Configure automated developer identity requirements
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
       - name: Initialize & Sync Kernel Source (GKI)
         run: |
-          echo "Initializing repo from: ${{ env.REPO_URL }} on branch: ${{ env.REPO_BRANCH }}"
+          # Push our custom Python 2 compilation pool to the absolute front of the system path execution order
+          export PATH="$GITHUB_WORKSPACE/py2-bin/bin:$PATH"
           
-          # Create an explicit local directory structure
+          echo "Verifying environment binary tracking intercept maps:"
+          python --version
+          
+          # Provision local directory structure
           mkdir -p $GITHUB_WORKSPACE/bin
           
-          # Pull the authentic, un-compiled Python engine wrapper cleanly from Google Gerrit
+          # Fetch pristine un-compiled wrapper script natively from Google Gerrit tree mirrors
           curl -s https://googlesource.com | base64 --decode > $GITHUB_WORKSPACE/bin/repo
           chmod a+x $GITHUB_WORKSPACE/bin/repo
           
-          # Prepend our clean local bin path right to the front of the tracking order
-          export PATH="$GITHUB_WORKSPACE/bin:$PATH"
-          
-          # Form the kernel building workspace
+          # Set up separate project architecture storage workspace
           mkdir -p android-kernel
           cd android-kernel
           
-          # Force python to strictly execute our targeted binary directly, completely bypassing system overrides
-          python3 $GITHUB_WORKSPACE/bin/repo init -u "${{ env.REPO_URL }}" -b "${{ env.REPO_BRANCH }}" --depth=1 --repo-url=https://gerrit.googlesource.com/git-repo
+          # Execute initialization explicitly using Python 2 layer to process execution loops
+          python $GITHUB_WORKSPACE/bin/repo init \
+            -u "${{ env.TARGET_GKI_MANIFEST }}" \
+            -b "${{ env.REPO_BRANCH }}" \
+            --depth=1 \
+            --repo-url=https://googlesource.com \
+            --repo-branch=stable
           
-          # Execute source synchronization download 
-          python3 $GITHUB_WORKSPACE/bin/repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+          # Perform direct shallow synchronization sequence
+          python $GITHUB_WORKSPACE/bin/repo sync -c -j$(nproc) --no-tags --no-clone-bundle
 
       - name: Apply NetHunter Patch & Configs
         run: |
