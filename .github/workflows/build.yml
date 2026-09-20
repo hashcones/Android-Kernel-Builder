@@ -49,10 +49,11 @@ jobs:
       - name: "✨ Create working dir"
         run: mkdir -p $kernelDir
 
-      - name: "⭐ Install prerequisites"
+      - name: "Install dependencies 🔌"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python2 python3 libarchive-tools
+          sudo apt-get install -y bc bison build-essential flex libssl-dev libelf-dev \
+          git curl zip openjdk-17-jdk python3 python3-pip python-is-python3 rsync
 
       - name: "🌟 Clone kernel source => (${{ env.kernelRepo }})"
         working-directory: ./${{ env.kernelDir }}
