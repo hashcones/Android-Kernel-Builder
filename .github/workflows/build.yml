@@ -12,7 +12,6 @@ jobs:
       actions: write
 
     env:
-      # Explicit GKI Manifest parameters matching your 6.1 device tree
       REPO_URL: "https://googlesource.com"
       REPO_BRANCH: "common-android14-6.1"
       BAZEL_TARGET: "//common:kernel_aarch64_dist"
@@ -25,8 +24,8 @@ jobs:
         run: |
           sudo apt-get update
           
-          # Install 'repo' natively alongside essential build utilities
-          sudo apt-get install -y git curl python3 python-is-python3 repo rsync
+          # CRITICAL: We DO NOT install 'repo' via apt-get here anymore to avoid the bug
+          sudo apt-get install -y git curl python3 python-is-python3 rsync
           
           # Configure Git Identity (Mandatory requirement for repo init)
           git config --global user.name "GitHub Action"
@@ -36,11 +35,19 @@ jobs:
         run: |
           echo "Initializing repo from: ${{ env.REPO_URL }} on branch: ${{ env.REPO_BRANCH }}"
           
+          # Create a custom binary path and download Google's direct standalone Python launcher
+          mkdir -p $HOME/bin
+          curl https://googlesource.com | base64 --decode > $HOME/bin/repo
+          chmod a+x $HOME/bin/repo
+          
+          # Add our clean standalone bin folder directly to the path
+          export PATH="$HOME/bin:$PATH"
+          
           # Create workspace directory structure
           mkdir -p android-kernel
           cd android-kernel
           
-          # Initialize the Google GKI Manifest forcing the correct Gerrit mirror path to fix the 404 error
+          # Run the pure standalone script. This strictly respects the gerrit path mirror and bypasses the 404 error
           repo init -u "${{ env.REPO_URL }}" -b "${{ env.REPO_BRANCH }}" --depth=1 --repo-url=https://googlesource.com
           
           # Execute the source tree sync 
@@ -48,7 +55,6 @@ jobs:
 
       - name: Apply NetHunter Patch & Configs
         run: |
-          # Verify directory exists before moving forward
           if [ ! -d "android-kernel/common" ]; then
             echo "Error: The Google GKI repo sync did not complete successfully or common directory is missing."
             exit 1
@@ -86,10 +92,8 @@ jobs:
 
       - name: Prepare AnyKernel3 Packaging
         run: |
-          # Clone standard flashing staging framework
           git clone https://github.com
           
-          # Dynamically search deep inside bazel-bin to discover the compiled output binary
           KERNEL_IMAGE=$(find android-kernel/bazel-bin -name "Image" -type f | head -n 1)
           
           if [ -z "$KERNEL_IMAGE" ]; then
@@ -99,10 +103,8 @@ jobs:
           
           echo "Found kernel image target path at: $KERNEL_IMAGE"
           
-          # Stage the binary inside the flashing working folder
           cp "$KERNEL_IMAGE" AnyKernel3/
           
-          # Package the payload
           cd AnyKernel3
           zip -r9 ../AnyKernel3-NetHunter-GKI.zip *
 
