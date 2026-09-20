@@ -16,10 +16,6 @@ jobs:
       TARGET_GKI_MANIFEST: "https://android.googlesource.com/kernel/manifest"
       REPO_BRANCH: "common-android14-6.1"
       BAZEL_TARGET: "//common:kernel_aarch64_dist"
-
-      # Replace this with the NetHunter patch repository required by your target.
-      NETHUNTER_PATCH_REPO: "https://gitlab.com/kalilinux/nethunter/build-scripts/kali-nethunter-kernel.git"
-
       ANYKERNEL_REPO: "https://github.com/osm0sis/AnyKernel3.git"
 
     steps:
@@ -29,16 +25,14 @@ jobs:
       - name: Install build dependencies
         shell: bash
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
 
           sudo apt-get update
-
           sudo apt-get install -y \
             git \
             curl \
             ca-certificates \
             python3 \
-            python3-venv \
             rsync \
             unzip \
             zip \
@@ -48,7 +42,6 @@ jobs:
             build-essential \
             libssl-dev \
             libelf-dev \
-            libffi-dev \
             pahole \
             ccache
 
@@ -58,7 +51,7 @@ jobs:
       - name: Install official repo launcher
         shell: bash
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
 
           mkdir -p "$GITHUB_WORKSPACE/bin"
 
@@ -67,7 +60,6 @@ jobs:
             --output "$GITHUB_WORKSPACE/bin/repo"
 
           chmod 0755 "$GITHUB_WORKSPACE/bin/repo"
-
           echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
 
           "$GITHUB_WORKSPACE/bin/repo" --version
@@ -77,11 +69,10 @@ jobs:
       - name: Initialize GKI source tree
         shell: bash
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
 
           rm -rf "$GITHUB_WORKSPACE/android-kernel"
           mkdir -p "$GITHUB_WORKSPACE/android-kernel"
-
           cd "$GITHUB_WORKSPACE/android-kernel"
 
           repo init \
@@ -93,12 +84,10 @@ jobs:
       - name: Sync GKI source tree
         shell: bash
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
 
           cd "$GITHUB_WORKSPACE/android-kernel"
 
-          # Start with low concurrency so transient HTTPS failures do not
-          # create hundreds of failing Python SSL worker threads.
           repo sync \
             --current-branch \
             --jobs=2 \
@@ -107,67 +96,70 @@ jobs:
             --force-sync \
             --fail-fast
 
-          if [ ! -d "common" ]; then
+          test -d common || {
             echo "::error::repo sync completed without creating android-kernel/common"
-            echo "Current repository contents:"
             find . -maxdepth 2 -type d | sort | head -100
             exit 1
-          fi
+          }
 
-          if [ ! -f "common/BUILD.bazel" ]; then
-            echo "::error::The common directory exists, but common/BUILD.bazel is missing"
+          test -f common/BUILD.bazel || {
+            echo "::error::android-kernel/common/BUILD.bazel is missing"
             exit 1
-          fi
+          }
 
-          echo "GKI source tree successfully synchronized."
-          echo "Kernel source: $GITHUB_WORKSPACE/android-kernel/common"
-
-      - name: Apply NetHunter patch and configuration
+      - name: Apply NetHunter-compatible kernel configuration
         shell: bash
         working-directory: android-kernel/common
         run: |
-          set -euxo pipefail
-
-          rm -rf kali-nethunter-kernel
-
-          git clone \
-            --depth=1 \
-            "$NETHUNTER_PATCH_REPO" \
-            kali-nethunter-kernel
-
-          if [ ! -x "kali-nethunter-kernel/patch.sh" ]; then
-            echo "::error::The NetHunter repository does not contain an executable patch.sh"
-            find kali-nethunter-kernel -maxdepth 2 -type f -print
-            exit 1
-          fi
-
-          ./kali-nethunter-kernel/patch.sh ..
+          set -Eeuo pipefail
 
           CONFIG_FILE="arch/arm64/configs/gki_defconfig"
-
-          if [ ! -f "$CONFIG_FILE" ]; then
-            echo "::error::Unable to find $CONFIG_FILE"
+          test -f "$CONFIG_FILE" || {
+            echo "::error::Missing $CONFIG_FILE"
             exit 1
-          fi
+          }
 
-          cat >> "$CONFIG_FILE" <<'EOF'
-          CONFIG_SYSVIPC=y
-          CONFIG_BINFMT_MISC=y
-          CONFIG_CFG80211=m
-          CONFIG_MAC80211=m
-          CONFIG_CFG80211_WEXT=y
-          CONFIG_USB_G_ANDROID=y
-          CONFIG_USB_F_HID=y
-          CONFIG_USB_CONFIGFS_F_HID=y
-          EOF
+          # These are configuration-only changes. No legacy NetHunter patch
+          # repository or device-specific source patches are used.
+          set_config() {
+            local key="$1"
+            local value="$2"
 
-          echo "NetHunter patch and configuration completed."
+            if ! grep -RqsE "^[[:space:]]*(menuconfig[[:space:]]+|config[[:space:]]+)${key#CONFIG_}([[:space:]]|$)" \
+                --include='Kconfig' \
+                --include='Kconfig.*' \
+                .; then
+              echo "::warning::${key} is not declared by this kernel tree; skipping"
+              return 0
+            fi
+
+            sed -i \
+              -e "/^${key}=/d" \
+              -e "/^# ${key} is not set$/d" \
+              "$CONFIG_FILE"
+
+            printf '%s=%s\n' "$key" "$value" >> "$CONFIG_FILE"
+            echo "Enabled ${key}=${value}"
+          }
+
+          set_config CONFIG_SYSVIPC y
+          set_config CONFIG_BINFMT_MISC y
+          set_config CONFIG_CFG80211 m
+          set_config CONFIG_MAC80211 m
+          set_config CONFIG_USB_G_ANDROID y
+          set_config CONFIG_USB_F_HID y
+          set_config CONFIG_USB_CONFIGFS y
+          set_config CONFIG_USB_CONFIGFS_F_HID y
+
+          echo "Final NetHunter-related configuration entries:"
+          grep -E '^CONFIG_(SYSVIPC|BINFMT_MISC|CFG80211|MAC80211|USB_G_ANDROID|USB_F_HID|USB_CONFIGFS)' \
+            "$CONFIG_FILE" || true
 
       - name: Build with Bazel/Kleaf
         shell: bash
         working-directory: android-kernel
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
 
           echo "Starting Bazel build for target: $BAZEL_TARGET"
 
@@ -175,12 +167,12 @@ jobs:
             --//common:gki_certification=false \
             "$BAZEL_TARGET"
 
-      - name: Locate kernel image
-        id: kernel-image
+      - name: Locate kernel image and modules
+        id: kernel-artifacts
         shell: bash
         working-directory: android-kernel
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
           KERNEL_IMAGE="$(find bazel-bin -type f -name Image -print -quit)"
 
@@ -193,32 +185,37 @@ jobs:
           echo "Kernel image found at: $KERNEL_IMAGE"
           echo "path=$KERNEL_IMAGE" >> "$GITHUB_OUTPUT"
 
+          mkdir -p "$GITHUB_WORKSPACE/kernel-modules"
+          find bazel-bin -type f \( -name '*.ko' -o -name 'modules.load' -o -name 'modules.dep' \) \
+            -exec cp --parents '{}' "$GITHUB_WORKSPACE/kernel-modules" \; || true
+
       - name: Prepare AnyKernel3 package
         shell: bash
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
 
           rm -rf AnyKernel3
-
-          git clone \
-            --depth=1 \
-            "$ANYKERNEL_REPO" \
-            AnyKernel3
+          git clone --depth=1 "$ANYKERNEL_REPO" AnyKernel3
 
           cp \
-            "android-kernel/${{ steps.kernel-image.outputs.path }}" \
+            "android-kernel/${{ steps.kernel-artifacts.outputs.path }}" \
             AnyKernel3/Image
 
           cd AnyKernel3
+          zip -r9 ../AnyKernel3-NetHunter-config-kernel.zip . -x '.git/*'
 
-          zip -r9 \
-            "../AnyKernel3-NetHunter-GKI.zip" \
-            . \
-            -x ".git/*"
-
-      - name: Upload kernel artifact
+      - name: Upload kernel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3-NetHunter-GKI
-          path: AnyKernel3-NetHunter-GKI.zip
+          name: nethunter-config-kernel
+          path: |
+            android-kernel/${{ steps.kernel-artifacts.outputs.path }}
+            kernel-modules
+          if-no-files-found: error
+
+      - name: Upload AnyKernel3 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-NetHunter-config-kernel
+          path: AnyKernel3-NetHunter-config-kernel.zip
           if-no-files-found: error
