@@ -17,110 +17,103 @@ jobs:
 
       - name: Clean Environment & Install Dependencies
         run: |
-          # Remove conflicting packages and install Bazel/Repo prerequisites
           sudo apt-get update
-          sudo apt-get install -y jq git curl python3 python-is-python3
           
-          # Install Google's 'repo' tool
-          mkdir -p ~/.bin
-          curl https://googlesource.com | base64 --decode > ~/.bin/repo
-          chmod a+x ~/.bin/repo
-          echo "$HOME/.bin" >> $GITHUB_PATH
-
-          # Configure Git Identity (Required for repo sync)
+          # Install 'repo' natively from Ubuntu repositories alongside building tools
+          sudo apt-get install -y jq git curl python3 python-is-python3 repo rsync
+          
+          # Configure Git Identity (Mandatory requirement for repo init)
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
       - name: Initialize & Sync Kernel Source (GKI)
         run: |
-          # 1. Parse variables from repos.json using jq
-          REPO_URL=$(jq -r '.[0].repo // "https://googlesource.com"' repos.json)
-          REPO_BRANCH=$(jq -r '.[0].branch // "common-android14-6.1"' repos.json)
+          # 1. Parse manifest variables from repos.json using jq
+          REPO_URL=$(jq -r '..repo // "https://googlesource.com"' repos.json)
+          REPO_BRANCH=$(jq -r '..branch // "common-android14-6.1"' repos.json)
           
           echo "Initializing repo from: $REPO_URL on branch: $REPO_BRANCH"
           
-          # 2. Create workspace and sync
+          # 2. Create workspace directory structure
           mkdir -p android-kernel
           cd android-kernel
           
-          # Initialize the Google GKI Manifest
+          # Initialize the Google GKI Manifest matching your chip arch
           repo init -u "$REPO_URL" -b "$REPO_BRANCH" --depth=1
           
-          # Sync the tree (This takes time and space)
+          # Execute the source tree sync (Shallow clone to save space)
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle
 
       - name: Apply NetHunter Patch & Configs
         run: |
-          # 1. Double check that the repository actually synced successfully
+          # Verify directory exists before attempting tracking navigation
           if [ ! -d "android-kernel/common" ]; then
-            echo "Error: The Google GKI repo sync did not complete successfully or the directory is missing."
-            echo "Listing current directory contents to debug:"
+            echo "Error: The Google GKI repo sync did not complete successfully or common directory is missing."
+            echo "Listing environment tree to debug:"
             ls -la
             exit 1
           fi
 
           cd android-kernel/common
           
-          # Check if NetHunter patching is requested in repos.json
-          DO_PATCH=$(jq -r '.[0].nethunter_patch // false' $GITHUB_WORKSPACE/repos.json)
+          # Evaluate if NetHunter source patching is requested in repos.json
+          DO_PATCH=$(jq -r '..nethunter_patch // false' $GITHUB_WORKSPACE/repos.json)
           
           if [ "$DO_PATCH" = "true" ]; then
               echo "Downloading and applying NetHunter patches..."
-              # FIXED: Fully qualified repository path ensuring it targets the patch scripts directly
               git clone https://gitlab.com
               cd kali-nethunter-kernel
               ./patch.sh ..
               cd ..
           fi
 
-          # Append extra configs from repos.json to gki_defconfig
-          jq -r '.[0].extra_configs[]' $GITHUB_WORKSPACE/repos.json > extra_configs.txt
+          # Read and safely append configurations array from json to gki_defconfig mapping table
+          jq -r '..extra_configs[]' $GITHUB_WORKSPACE/repos.json > extra_configs.txt
           
           echo "Appending the following configurations to arch/arm64/configs/gki_defconfig:"
           cat extra_configs.txt
           
           cat extra_configs.txt >> arch/arm64/configs/gki_defconfig
           
-          # Clean up
+          # Clean up temporary configuration file
           rm extra_configs.txt
 
       - name: Build with Bazel (Kleaf)
         working-directory: android-kernel
         run: |
-          # Extract build target from repos.json or default to arm64_dist
-          BAZEL_TARGET=$(jq -r '.[0].bazel_target // "//common:kernel_aarch64_dist"' $GITHUB_WORKSPACE/repos.json)
-          GKI_OVERRIDE=$(jq -r '.[0].gki_certification_override // true' $GITHUB_WORKSPACE/repos.json)
+          # Extract custom bazel target parameters or default to standard aarch64 dist
+          BAZEL_TARGET=$(jq -r '..bazel_target // "//common:kernel_aarch64_dist"' $GITHUB_WORKSPACE/repos.json)
+          GKI_OVERRIDE=$(jq -r '..gki_certification_override // true' $GITHUB_WORKSPACE/repos.json)
           
           FLAGS=""
           if [ "$GKI_OVERRIDE" = "true" ]; then
              FLAGS="--//common:gki_certification=false"
           fi
 
-          echo "Starting Bazel build for target: $BAZEL_TARGET with flags: $FLAGS"
+          echo "Starting Hermetic Bazel build for target: $BAZEL_TARGET with flags: $FLAGS"
           
-          # Run the hermetic build
+          # Execute compiler engine build strings
           tools/bazel build $FLAGS $BAZEL_TARGET
 
       - name: Prepare AnyKernel3 Packaging
         run: |
-          # Clone AnyKernel3
+          # Clone standard flashing staging framework
           git clone https://github.com
           
-          # Locate the compiled Image (Bazel outputs are deep in bazel-bin)
-          # We look for Image or Image.lz4 in the distribution directory
+          # Dynamically search deep inside bazel-bin to discover the compiled output binary
           KERNEL_IMAGE=$(find android-kernel/bazel-bin -name "Image" -type f | head -n 1)
           
           if [ -z "$KERNEL_IMAGE" ]; then
-            echo "Error: Compiled Kernel Image not found!"
+            echo "Error: Compiled Kernel Image binary structure could not be found!"
             exit 1
           fi
           
-          echo "Found kernel image at: $KERNEL_IMAGE"
+          echo "Found kernel image target path at: $KERNEL_IMAGE"
           
-          # Copy image to AnyKernel3 folder
+          # Stage the binary inside the flashing working folder
           cp "$KERNEL_IMAGE" AnyKernel3/
           
-          # Zip it up
+          # Package the payload
           cd AnyKernel3
           zip -r9 ../AnyKernel3-NetHunter-GKI.zip *
 
