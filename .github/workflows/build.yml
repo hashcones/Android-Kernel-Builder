@@ -51,6 +51,14 @@ jobs:
 
       - name: Apply NetHunter Patch & Configs
         run: |
+          # 1. Double check that the repository actually synced successfully
+          if [ ! -d "android-kernel/common" ]; then
+            echo "Error: The Google GKI repo sync did not complete successfully or the directory is missing."
+            echo "Listing current directory contents to debug:"
+            ls -la
+            exit 1
+          fi
+
           cd android-kernel/common
           
           # Check if NetHunter patching is requested in repos.json
@@ -58,15 +66,14 @@ jobs:
           
           if [ "$DO_PATCH" = "true" ]; then
               echo "Downloading and applying NetHunter patches..."
+              # FIXED: Fully qualified repository path ensuring it targets the patch scripts directly
               git clone https://gitlab.com
               cd kali-nethunter-kernel
-              # Execute patch script targeting the 'common' directory (parent of current)
               ./patch.sh ..
               cd ..
           fi
 
           # Append extra configs from repos.json to gki_defconfig
-          # Using a temporary file to read the array from JSON
           jq -r '.[0].extra_configs[]' $GITHUB_WORKSPACE/repos.json > extra_configs.txt
           
           echo "Appending the following configurations to arch/arm64/configs/gki_defconfig:"
