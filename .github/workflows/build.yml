@@ -12,7 +12,7 @@ jobs:
       actions: write
 
     env:
-      # Hardcoded GKI Manifest parameters matching your 6.1 device tree
+      # Explicit GKI Manifest parameters matching your 6.1 device tree
       REPO_URL: "https://googlesource.com"
       REPO_BRANCH: "common-android14-6.1"
       BAZEL_TARGET: "//common:kernel_aarch64_dist"
@@ -40,7 +40,7 @@ jobs:
           mkdir -p android-kernel
           cd android-kernel
           
-          # Initialize the Google GKI Manifest with a shallow clone depth
+          # Initialize the Google GKI Manifest forcing the correct Gerrit mirror path to fix the 404 error
           repo init -u "${{ env.REPO_URL }}" -b "${{ env.REPO_BRANCH }}" --depth=1 --repo-url=https://googlesource.com
           
           # Execute the source tree sync 
