@@ -41,7 +41,7 @@ jobs:
           cd android-kernel
           
           # Initialize the Google GKI Manifest with a shallow clone depth
-          repo init -u "${{ env.REPO_URL }}" -b "${{ env.REPO_BRANCH }}" --depth=1
+          repo init -u "${{ env.REPO_URL }}" -b "${{ env.REPO_BRANCH }}" --depth=1 --repo-url=https://googlesource.com
           
           # Execute the source tree sync 
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle
